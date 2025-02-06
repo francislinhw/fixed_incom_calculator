@@ -72,13 +72,10 @@ def FV(
     if future_point_of_time is None:
         future_point_of_time = times[-1]
 
-    temp_future_value = 0
-
-    for cashflow, time, discount_rate in zip(cashflows, times, discount_rates):
-        time_to_maturity = future_point_of_time - time
-        temp_future_value += cashflow * (1 + discount_rate) ** time_to_maturity
-
-    return temp_future_value
+        return sum(
+            cf * (1 + r) ** (future_point_of_time - t)
+            for cf, r, t in zip(cashflows, discount_rates, times)
+        )
 
 
 def find_fixed_payment_in_times_to_fit_present_value(
@@ -193,9 +190,10 @@ def find_the_fixed_payment_in_certain_times_to_fit_present_value(
             test_cashflows[idx] = payment
 
         # Calculate present value
-        computed_pv = sum(
-            cf / (1 + r) ** t for cf, r, t in zip(test_cashflows, discount_rates, times)
-        )
+        computed_pv = PV(test_cashflows, discount_rates, times)
+
+        # if (computed_pv - present_value) ** 2 < 1e-6:
+        #     print("Converged")
 
         return (computed_pv - present_value) ** 2
 
@@ -295,6 +293,9 @@ def find_the_fixed_payment_in_certain_times_to_fit_future_value(
         computed_fv = calculate_future_value(
             test_cashflows, discount_rates, future_point_of_time, times
         )
+
+        if (computed_fv - future_value) ** 2 < 1e-6:
+            print("Converged")
 
         return (computed_fv - future_value) ** 2
 

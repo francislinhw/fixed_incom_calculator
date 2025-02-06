@@ -55,7 +55,7 @@ fv_of_perpetuity = PV_perpetuity(50000, 0.05)
 
 perpetuity_cashflow = [0] * 31 + [fv_of_perpetuity]
 
-PV_of_perpetuity = PV(perpetuity_cashflow, [0.05] * 32, [i for i in range(32)])
+PV_of_perpetuity = PV(perpetuity_cashflow, [0.05] * 32, [i for i in range(1, 33)])
 
 fixed_payment = find_the_fixed_payment_in_certain_times_to_fit_present_value(
     present_value=PV_of_perpetuity,
@@ -65,6 +65,12 @@ fixed_payment = find_the_fixed_payment_in_certain_times_to_fit_present_value(
 )
 
 print("Fixed Payment: ", fixed_payment)
+
+# verify that the fixed payment is correct
+verify_cashflows = [2000] * 5 + [fixed_payment] * 20 + [3000] * 3 + [1000] * 4
+present_value = PV(verify_cashflows, [0.05] * 32, [i for i in range(1, 33)])
+print("Present Value: Annuity ", PV_of_perpetuity)
+print("Present Value: Verify ", present_value)
 
 fixed_payment = find_the_fixed_payment_in_certain_times_to_fit_future_value(
     future_value=fv_of_perpetuity,
@@ -77,6 +83,6 @@ print("Fixed Payment: ", fixed_payment)
 
 # verify that the fixed payment is correct
 verify_cashflows = [2000] * 5 + [fixed_payment] * 20 + [3000] * 3 + [1000] * 4
-present_value = PV(verify_cashflows, [0.05] * 32, [i for i in range(32)])
+present_value = PV(verify_cashflows, [0.05] * 32, [i for i in range(1, 33)])
 print("Present Value: Annuity ", PV_of_perpetuity)
 print("Present Value: Verify ", present_value)
