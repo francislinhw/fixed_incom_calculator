@@ -343,7 +343,7 @@ cashflows = np.array(
 )
 
 investments, final_cash = optimize_investments(
-    cashflows=cashflows, budget=100, max_per_investment=50
+    cashflows=cashflows, budget=100, max_per_investments=[50, 50, 50]
 )
 
 print("Optimal Investments:")
