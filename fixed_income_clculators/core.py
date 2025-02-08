@@ -1,8 +1,10 @@
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 from scipy import optimize
-from scipy.optimize import fsolve
+from scipy.optimize import fsolve, linprog, minimize
 import pandas as pd
+from ortools.linear_solver import pywraplp
+from itertools import product
 
 
 def PV_perpetuity(cashflow: float, discount_rate: float) -> float:
@@ -308,3 +310,236 @@ def find_the_fixed_payment_in_certain_times_to_fit_future_value(
         raise ValueError("Optimization failed to converge")
 
     return float(result.x)
+
+
+def find_the_optimal_weights_to_match_the_target_liability_by_different_cashflows(
+    list_candidate_bonds: dict[str, list[float]],
+    list_candidate_bonds_prices: dict[str, float],
+    list_times: List[float],
+    target_liability: list[float],
+) -> tuple[dict[str, float], float]:
+    """
+    Example questions:
+    • An insurance company has to
+    pay out $50,000 every year for
+    the next 5 years.
+    • The bonds shownare available to
+    trade.
+    • Find the cheapest solution to the
+    liability problem.
+    • Excess funds carry over to the
+    next year without any interest.
+    Bond(FV=100)
+    Coupon(a
+    nnual) Term
+    Price
+    ($)
+    1 5% 1 98
+    2 7% 3 100
+    3 4% 4 94
+    4 3% 5 92
+    5 0% 5 89
+
+    list_candidate_bonds = {
+        "bond1": [105],
+        "bond2": [7, 7, 107],
+        "bond3": [4, 4, 4, 104],
+        "bond4": [3, 3, 3, 3, 103],
+        "bond5": [0, 0, 0, 0, 100],
+    }
+    list_candidate_bonds_prices = {
+        "bond1": 98,
+        "bond2": 100,
+        "bond3": 94,
+        "bond4": 92,
+        "bond5": 89,
+    }
+    list_times = [1, 2, 3, 4, 5]
+    target_liability = [50000, 50000, 50000, 50000, 50000]
+
+    """
+
+    num_bonds = len(list_candidate_bonds)
+    num_periods = len(list_times)
+
+    # Construct cashflow matrix
+    cashflow_matrix = np.zeros((num_periods, num_bonds))
+    bond_prices = np.array(
+        [list_candidate_bonds_prices[bond] for bond in list_candidate_bonds]
+    )
+    bond_names = list(list_candidate_bonds.keys())
+
+    for j, bond in enumerate(bond_names):
+        cashflows = list_candidate_bonds[bond]
+        for i in range(len(cashflows)):
+            if i < num_periods:
+                cashflow_matrix[i, j] = cashflows[i]
+
+    # ✅ Fix: Use inequality constraints (Ax >= b) instead of strict equality (Ax = b)
+    A_ub = -cashflow_matrix  # Convert to Ax >= b format
+    b_ub = -np.array(target_liability)  # Flip signs to match Ax >= b formulation
+
+    # ✅ Fix: Introduce slack variables to allow small deviations
+    slack_penalty = 1e3  # Adjust this if needed (higher = stricter matching)
+    slack_matrix = np.eye(num_periods)  # Identity matrix for slack variables
+    A_ub = np.hstack((A_ub, slack_matrix))  # Add slack variables to constraints
+    c = np.concatenate(
+        (bond_prices, np.ones(num_periods) * slack_penalty)
+    )  # Penalize slack usage
+
+    # ✅ Fix: Update bounds (bonds non-negative, slack variables unrestricted)
+    bounds = [(0, None)] * num_bonds + [(0, None)] * num_periods
+
+    # Solve using HiGHS with dual simplex for stability
+    result = linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method="highs-ds")
+
+    if result.success:
+        optimal_bond_allocations = {
+            bond_names[i]: result.x[i] for i in range(num_bonds)
+        }
+        total_cost = sum(
+            optimal_bond_allocations[bond] * bond_prices[i]
+            for i, bond in enumerate(bond_names)
+        )
+        return optimal_bond_allocations, total_cost
+    else:
+        raise ValueError(f"❌ Optimization failed: {result.message}")
+
+
+def maximize_the_expected_return_of_a_portfolio_with_a_given_constraints(
+    cash_flows: dict[str, list[float]],  # cash flows for each bond over years
+    bond_prices: dict[str, float],  # prices for each bond
+    total_budget: float,  # Total available investment
+    max_investment_per_bond: float,  # Maximum amount to invest in any bond
+):
+    """
+    Brute force approach to maximize expected return by exploring different investment allocations.
+    """
+
+    # Extract bond names and cash flow data
+    bond_names = list(cash_flows.keys())
+    cash_flow_matrix = np.array(
+        list(cash_flows.values())
+    )  # Investment returns over the years
+    bond_prices = np.array([bond_prices[name] for name in bond_names])  # Bond prices
+
+    # Initialize the best solution
+    best_return = 0
+    best_allocations = {}
+
+    # Generate all possible combinations of investment amounts for each bond
+    # We create a range from 0 to max_investment_per_bond with a step size of 1
+    ranges = [range(0, int(max_investment_per_bond) + 1) for _ in bond_names]
+
+    # Iterate over all possible combinations of investments
+    for allocation in product(*ranges):
+        # Calculate total investment
+        total_investment = sum(
+            allocation[i] * bond_prices[i] for i in range(len(bond_names))
+        )
+
+        # Skip allocations that exceed the total budget
+        if total_investment > total_budget:
+            continue
+
+        # Calculate the total return at Year 3
+        total_return = sum(
+            allocation[i] * cash_flow_matrix[i, -1] for i in range(len(bond_names))
+        )
+
+        # If this combination is better, store the result
+        if total_return > best_return:
+            best_return = total_return
+            best_allocations = {
+                bond_names[i]: allocation[i] for i in range(len(bond_names))
+            }
+
+    return best_allocations, best_return
+
+
+def auction_revenue_with_constraints(
+    bids: list[tuple[list[int], float]],  # [selected bonds, price]
+    max_bonds_selected: int,  # max # of bonds that can be selected
+) -> tuple[float, list[str]]:
+    """
+        bids = [
+        ([0], 6),  # Bid 1: Item 1, Price $6
+        ([1], 3),  # Bid 2: Item 2, Price $3
+        ([2, 3], 12),  # Bid 3: Item 3 and 4, Price $12
+        ([0, 2], 12),  # Bid 4: Item 1 and 3, Price $12
+        ([1, 3], 8),  # Bid 5: Item 2 and 4, Price $8
+        ([0, 2, 3], 16),  # Bid 6: Item 1, 3, and 4, Price $16
+        ([0, 1, 2], 13),  # Bid 7: Item 1, 2, and 3, Price $13
+    ]
+
+    """
+    # Example Bid Matrix B (7 bids, 4 bonds)
+    # make list of candidate bonds from bids
+    list_candidate_bonds = list(set(sum((bid[0] for bid in bids), [])))
+    # Make B from bids
+    B = np.zeros((len(bids), len(list_candidate_bonds)))
+    for i, bid in enumerate(bids):
+        for bond in bid[0]:
+            B[i, bond] = 1
+
+    # B = np.array(
+    #     [
+    #         [1, 0, 1, 0],  # Bid 1: Bonds 1 and 3 selected
+    #         [0, 1, 0, 1],  # Bid 2: Bonds 2 and 4 selected
+    #         [1, 1, 0, 1],  # Bid 3: Bonds 1, 2, and 4 selected
+    #         [1, 0, 1, 0],  # Bid 4: Bonds 1 and 3 selected
+    #         [0, 1, 1, 0],  # Bid 5: Bonds 2 and 3 selected
+    #         [1, 1, 1, 0],  # Bid 6: Bonds 1, 2, and 3 selected
+    #         [1, 1, 1, 0],  # Bid 7: Bonds 1, 2, and 3 selected
+    #     ]
+    # )
+
+    # find prices from bids
+    prices = [bid[1] for bid in bids]
+
+    # Number of bids (n) and number of bonds (m)
+    # Number of bids (n) and number of bonds (m)
+    n, m = B.shape
+
+    # Create the solver
+    solver = pywraplp.Solver.CreateSolver("SCIP")
+    if not solver:
+        print("Solver not created.")
+        return None
+
+    # Decision variables: S[i] (binary, indicating whether bid i is selected)
+    S = []
+    for i in range(n):
+        S.append(solver.BoolVar(f"S_{i}"))
+
+    # Objective function: maximize sum of selected bids' prices
+    objective = solver.Objective()
+    for i in range(n):
+        objective.SetCoefficient(S[i], prices[i])
+    objective.SetMaximization()
+
+    # Constraints: if a bid is selected, all bonds in that bid must be selected
+    for j in range(m):
+        constraint = solver.Constraint(
+            0, max_bonds_selected
+        )  # each bond can be selected at most once
+        for i in range(n):
+            if B[i][j] == 1:  # If the bond is selected in bid i
+                constraint.SetCoefficient(S[i], 1)
+
+    # Solve the problem
+    status = solver.Solve()
+
+    if status == pywraplp.Solver.OPTIMAL:
+        print("Optimal Solution:")
+        selected_bids = []
+        total_revenue = 0
+        for i in range(n):
+            if S[i].solution_value() > 0:
+                selected_bids.append(f"Bid {i+1}")
+                total_revenue += prices[i]
+
+        return total_revenue, selected_bids
+
+    else:
+        print("No optimal solution found.")
