@@ -5,6 +5,7 @@ from scipy.optimize import fsolve, linprog, minimize
 import pandas as pd
 from ortools.linear_solver import pywraplp
 from itertools import product
+import pulp
 
 
 def PV_perpetuity(cashflow: float, discount_rate: float) -> float:
@@ -543,3 +544,88 @@ def auction_revenue_with_constraints(
 
     else:
         print("No optimal solution found.")
+
+
+def optimize_investments(
+    cashflows: np.ndarray, budget: float, max_per_investment: float
+):
+    """
+    Optimize investments with multi-period cash flows.
+
+    Args:
+        cashflows: 2D array where each row represents an investment's cash flow
+                   (negative = cost, positive = return)
+        budget: Initial available cash
+        max_per_investment: Maximum allowed per investment at any period
+
+    Returns:
+        (investment_decisions, final_cash)
+    """
+    n_investments, total_periods = cashflows.shape
+    prob = pulp.LpProblem("Investment_Optimization", pulp.LpMaximize)
+
+    # Decision variables: Only create variables for valid investment periods
+    x = []
+    for i in range(n_investments):
+        x_i = []
+        for t in range(total_periods):
+            # Only create variable if there's an investment cost at this period
+            if cashflows[i][t] < 0:
+                x_var = pulp.LpVariable(
+                    f"x_{i}_{t}", lowBound=0, upBound=max_per_investment
+                )
+                x_i.append(x_var)
+            else:
+                x_i.append(None)  # Mark invalid investment period
+        x.append(x_i)
+
+    # Cash balance variables for each period
+    cash = [pulp.LpVariable(f"cash_{t}", lowBound=0) for t in range(total_periods + 1)]
+
+    # Objective: Maximize final cash
+    prob += cash[total_periods]
+
+    # Initial cash constraint (period 0)
+    initial_outflows = sum(
+        x[i][0] * (-cashflows[i][0])
+        for i in range(n_investments)
+        if x[i][0] is not None
+    )
+    prob += cash[0] == budget - initial_outflows
+
+    # Cash flow constraints for subsequent periods
+    for t in range(1, total_periods + 1):
+        # Calculate cash inflows from previous investments
+        inflows = 0
+        for i in range(n_investments):
+            for s in range(t):  # For all previous periods
+                if s < total_periods and (t - s) < cashflows.shape[1]:
+                    return_period = t - s
+                    if x[i][s] is not None and cashflows[i][return_period] > 0:
+                        inflows += x[i][s] * cashflows[i][return_period]
+
+        # Calculate outflows for new investments at current period
+        if t < total_periods:
+            outflows = sum(
+                x[i][t] * (-cashflows[i][t])
+                for i in range(n_investments)
+                if x[i][t] is not None
+            )
+        else:
+            outflows = 0
+
+        prob += cash[t] == cash[t - 1] + inflows - outflows
+
+    # Solve the problem
+    prob.solve()
+
+    # Extract results (only consider valid investments)
+    investment_decisions = []
+    for i in range(n_investments):
+        for t in range(total_periods):
+            if x[i][t] is not None:  # Skip invalid investments
+                val = x[i][t].varValue
+                if val is not None and val > 1e-6:
+                    investment_decisions.append((i, t, round(val, 2)))
+
+    return investment_decisions, pulp.value(cash[total_periods])

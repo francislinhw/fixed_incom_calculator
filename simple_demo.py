@@ -18,6 +18,7 @@ from fixed_income_clculators.core import (
     find_fixed_payment_in_times_to_fit_present_value,
     find_the_optimal_weights_to_match_the_target_liability_by_different_cashflows,
     maximize_the_expected_return_of_a_portfolio_with_a_given_constraints,
+    optimize_investments,
 )
 
 # 10 year 7% 100 PV coupon bond with price 106
@@ -198,7 +199,7 @@ available.
 $1.30 three years from now.
 • Investment 2: Every dollar invested now yields $0.20 a year from now and
 $1.10 two years from now.
-• Investment 3: Every dollar invested one year from now yields $1.50 three
+• Investment 3: Every dollar invested now yields $1.50 three
 years from now.
 • During each year leftover cash yields nothing. The most in each investment
 should be $50.
@@ -316,3 +317,36 @@ auction_revenue, selected_bids = auction_revenue_with_constraints(
 
 print("Auction Revenue: ", auction_revenue)
 print("Selected Bids: ", selected_bids)
+
+
+"""
+Example Usage of optimize_investments
+You have $100 to invest. The following three investment vehicles are
+available.
+• Investment 1: Every dollar invested now yields $0.10 a year from now, and
+$1.30 three years from now.
+• Investment 2: Every dollar invested now yields $0.20 a year from now and
+$1.10 two years from now.
+• Investment 3: Every dollar invested one year from now yields $1.50 three
+years from now.
+• During each year leftover cash yields nothing. The most in each investment
+should be $50.
+• How should you invest so as to maximize the cash three years from now?
+
+"""
+cashflows = np.array(
+    [
+        [-1, 0.1, 0, 1.3],  # Investment 1
+        [-1, 0.2, 1.1, 0],  # Investment 2
+        [0, -1, 0, 1.5],  # Investment 3
+    ]
+)
+
+investments, final_cash = optimize_investments(
+    cashflows=cashflows, budget=100, max_per_investment=50
+)
+
+print("Optimal Investments:")
+for inv in investments:
+    print(f"• Invest ${inv[2]:.2f} in Investment {inv[0]+1} at period {inv[1]}")
+print(f"\nFinal Cash after 3 years: ${final_cash:.2f}")
