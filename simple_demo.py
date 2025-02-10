@@ -350,3 +350,9 @@ print("Optimal Investments:")
 for inv in investments:
     print(f"• Invest ${inv[2]:.2f} in Investment {inv[0]+1} at period {inv[1]}")
 print(f"\nFinal Cash after 3 years: ${final_cash:.2f}")
+
+
+# Test 1 Official
+print("\n--------------------------------\n")
+print("\nTest 1 Official\n")
+print("\n *** Question 1 *** \n")

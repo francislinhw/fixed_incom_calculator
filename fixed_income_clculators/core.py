@@ -376,11 +376,11 @@ def find_the_optimal_weights_to_match_the_target_liability_by_different_cashflow
             if i < num_periods:
                 cashflow_matrix[i, j] = cashflows[i]
 
-    # ✅ Fix: Use inequality constraints (Ax >= b) instead of strict equality (Ax = b)
+    # Use inequality constraints (Ax >= b) instead of strict equality (Ax = b)
     A_ub = -cashflow_matrix  # Convert to Ax >= b format
     b_ub = -np.array(target_liability)  # Flip signs to match Ax >= b formulation
 
-    # ✅ Fix: Introduce slack variables to allow small deviations
+    # Introduce slack variables to allow small deviations
     slack_penalty = 1e3  # Adjust this if needed (higher = stricter matching)
     slack_matrix = np.eye(num_periods)  # Identity matrix for slack variables
     A_ub = np.hstack((A_ub, slack_matrix))  # Add slack variables to constraints
@@ -388,7 +388,7 @@ def find_the_optimal_weights_to_match_the_target_liability_by_different_cashflow
         (bond_prices, np.ones(num_periods) * slack_penalty)
     )  # Penalize slack usage
 
-    # ✅ Fix: Update bounds (bonds non-negative, slack variables unrestricted)
+    # Update bounds (bonds non-negative, slack variables unrestricted)
     bounds = [(0, None)] * num_bonds + [(0, None)] * num_periods
 
     # Solve using HiGHS with dual simplex for stability
@@ -404,7 +404,7 @@ def find_the_optimal_weights_to_match_the_target_liability_by_different_cashflow
         )
         return optimal_bond_allocations, total_cost
     else:
-        raise ValueError(f"❌ Optimization failed: {result.message}")
+        raise ValueError(f"Optimization failed: {result.message}")
 
 
 def maximize_the_expected_return_of_a_portfolio_with_a_given_constraints(
