@@ -6,6 +6,7 @@ import pandas as pd
 from ortools.linear_solver import pywraplp
 from itertools import product
 import pulp
+import math
 
 
 def PV_perpetuity(cashflow: float, discount_rate: float) -> float:
@@ -629,3 +630,171 @@ def optimize_investments(
                     investment_decisions.append((i, t, round(val, 2)))
 
     return investment_decisions, pulp.value(cash[total_periods])
+
+
+def continuous_forward_rate(target_start: int, target_end: int, rates_map: dict):
+    """
+    Calculate the continuous forward rate between two time periods.
+
+    Parameters:
+    - target_start (int): The start period for the forward rate (e.g., 1 for year 1).
+    - target_end (int): The end period for the forward rate (e.g., 2 for year 2).
+    # - current (int): The current period (e.g., 0 for the present).
+    - rates_map (dict): A dictionary with spot rates for different periods, where the key is the time period and the value is the rate.
+    # rate(0, 1), ....
+
+    Returns:
+    - forward_rate (float): The calculated continuous forward rate between target_start and target_end.
+    """
+    # if time is 0, rate is 0
+    rates_map[0] = 0
+
+    # Spot rates at target_start and target_end
+    R_start = rates_map.get(target_start)
+    R_end = rates_map.get(target_end)
+
+    if R_start is None or R_end is None:
+        raise ValueError(f"Spot rates for {target_start} or {target_end} are missing.")
+
+    # Use the formula for the forward rate with continuous compounding
+    forward_rate = (R_end * target_end - R_start * target_start) / (
+        target_end - target_start
+    )
+
+    return forward_rate
+
+
+def simple_forward_rate(target_start: int, target_end: int, rates_map: dict):
+    """
+    Calculate the simple forward rate between two time periods.
+
+    Parameters:
+    - target_start (int): The start period for the forward rate (e.g., 1 for year 1).
+    - target_end (int): The end period for the forward rate (e.g., 2 for year 2).
+    - rates_map (dict): A dictionary with spot rates for different periods, where the key is the time period and the value is the rate.
+
+    Returns:
+    - forward_rate (float): The calculated simple forward rate between target_start and target_end.
+    """
+    # if time is 0, rate is 0
+    rates_map[0] = 0
+
+    # Spot rates at target_start and target_end
+    R_start = rates_map.get(target_start)
+    R_end = rates_map.get(target_end)
+
+    if R_start is None or R_end is None:
+        raise ValueError(f"Spot rates for {target_start} or {target_end} are missing.")
+
+    # Use the formula for the simple forward rate
+    forward_rate = ((1 + R_end) ** target_end / (1 + R_start) ** target_start - 1) / (
+        target_end - target_start
+    )
+
+    return forward_rate
+
+
+def continuous_discount_factor(target_start: int, target_end: int, rates_map: dict):
+    """
+    Calculate the continuous discount factor between two time periods.
+    """
+    forward_rate = continuous_forward_rate(target_start, target_end, rates_map)
+    return np.exp(-forward_rate * (target_end - target_start))
+
+
+def convert_continuous_to_simple(rates_map):
+    """
+    Converts continuous compounding rates to simple rates using the relationship:
+    e^(r_t) = (1 + r_t).
+
+    Parameters:
+    - rates_map (dict): A dictionary with time periods as keys and continuous compounding rates as values.
+
+    Returns:
+    - simple_rates_map (dict): A dictionary with time periods as keys and simple rates as values.
+    """
+    simple_rates_map = {}
+
+    for time, r_continuous in rates_map.items():
+        # Convert continuous rate to simple rate using the formula
+        r_simple = math.exp(r_continuous) - 1
+        simple_rates_map[time] = r_simple
+
+    return simple_rates_map
+
+
+def calculate_bond_price_by_binomial_tree(
+    interest_rate_tree, face_value=100, maturity=3, probability=0.5
+):
+    """
+    Calculate the price of a zero-coupon bond using a binomial interest rate tree.
+
+    Parameters:
+    - interest_rate_tree (list of lists): The interest rate tree with rates for each node.
+    - face_value (float): The face value of the bond (default is 100).
+    - maturity (int): The maturity period of the bond in years (default is 3).
+    - probability (float): The risk-neutral probability of interest rate increase (default is 50%).
+
+    Returns:
+    - bond_price (float): The price of the bond at time 0.
+    """
+    if maturity == 0:
+        return face_value
+    # Step 1: Initialize the bond price tree with face value at maturity
+    bond_tree = []
+    for i in range(maturity + 1):  # One extra layer to store the maturity values
+        bond_tree.append([0] * (2**i))  # Create each layer of the tree
+
+    # Set the bond value at maturity (all nodes in the last row are 100)
+    for i in range(len(bond_tree[maturity])):
+        bond_tree[maturity][i] = face_value
+
+    # Step 2: Calculate the bond prices for previous layers
+    for t in range(maturity - 1, -1, -1):  # Start from maturity-1 and go back to time 0
+        for i in range(
+            len(interest_rate_tree[t])
+        ):  # Iterate through each node at this time
+            r = interest_rate_tree[t][i]  # The interest rate at this node
+            # Use the formula to calculate the bond price at this node
+            # The bond price is the risk-neutral discounted expected value of the next step
+            bond_tree[t][i] = (
+                probability * bond_tree[t + 1][2 * i]  # 2 * i means left
+                + (1 - probability)
+                * bond_tree[t + 1][2 * i + 1]  # 2 * i + 1 means right
+            ) * math.exp(-r)
+
+    # Step 3: Return the price of the bond at time 0 (the value at the root of the tree)
+    return bond_tree[0][0]
+
+
+def forward_rate_from_binomial_tree(
+    from_year, to_year, interest_rate_tree, probability: Optional[float] = 0.5
+):
+    """
+    Calculate the forward rate from year i to year j using the binomial tree
+    """
+    if from_year == to_year:
+        return 0
+    else:
+        # calculate the bond price for from_year
+        bond_price_from_year = (
+            calculate_bond_price_by_binomial_tree(
+                interest_rate_tree, maturity=from_year, probability=probability
+            )
+            / 100
+        )
+        # calculate the bond price for to_year
+        bond_price_to_year = (
+            calculate_bond_price_by_binomial_tree(
+                interest_rate_tree, maturity=to_year, probability=probability
+            )
+            / 100
+        )
+        # calculate the forward rate
+        bond_price_from_year_zero_rate = -math.log(bond_price_from_year) / from_year
+        bond_price_to_year_zero_rate = -math.log(bond_price_to_year) / to_year
+        forward_rate = (
+            bond_price_to_year_zero_rate * to_year
+            - bond_price_from_year_zero_rate * from_year
+        ) / (to_year - from_year)
+        return forward_rate

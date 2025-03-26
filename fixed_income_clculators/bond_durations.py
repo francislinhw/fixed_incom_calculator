@@ -40,7 +40,7 @@ def calculate_bond_metrics(
     initial_guess = [sum(discount_rates) / len(discount_rates)]
 
     # Optimize to find the unified YTM
-    result = minimize(ytm_objective, initial_guess, bounds=[(0, 1)])
+    result = minimize(ytm_objective, initial_guess, bounds=[(0, 2)])
     ytm = result.x[0]
 
     # Calculate the bond price using the optimized YTM
