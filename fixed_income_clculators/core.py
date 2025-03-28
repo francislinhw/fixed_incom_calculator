@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 import numpy as np
 from scipy import optimize
 from scipy.optimize import fsolve, linprog, minimize
@@ -798,3 +798,177 @@ def forward_rate_from_binomial_tree(
             - bond_price_from_year_zero_rate * from_year
         ) / (to_year - from_year)
         return forward_rate
+
+
+# ---------------------------
+# Black-Scholes 相關計算函數
+# ---------------------------
+
+
+def phi(x):
+    """標準常態分佈pdf"""
+    return 1.0 / math.sqrt(2 * math.pi) * math.exp(-0.5 * x * x)
+
+
+def Phi(x):
+    """標準常態分佈cdf (可用 math.erf 近似，但此處直接寫示範)"""
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def d1(S, K, r, sigma, T):
+    """Black-Scholes 中 d1"""
+    return (math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
+
+
+def d2(S, K, r, sigma, T):
+    """Black-Scholes 中 d2"""
+    return d1(S, K, r, sigma, T) - sigma * math.sqrt(T)
+
+
+def call_delta(S, K, r, sigma, T):
+    """Call 的 Delta"""
+    return Phi(d1(S, K, r, sigma, T))
+
+
+def currency_option_delta(
+    S,
+    K,
+    r,
+    sigma,
+    T,
+    rate_foreign,
+    option_type: Optional[Literal["call", "put"]] = "call",
+):
+    """Currency Call 的 Delta"""
+    rate_in_formula = r - rate_foreign
+
+    dividend_delta = call_delta(S, K, r=rate_in_formula, sigma=sigma, T=T)
+    return (
+        dividend_delta * np.exp(-rate_foreign * T)
+        if option_type == "call"
+        else np.exp(-rate_foreign * T)
+        * (put_delta(S, K, r=rate_in_formula, sigma=sigma, T=T))
+    )
+
+
+def put_delta(S, K, r, sigma, T):
+    """Put 的 Delta = Call Delta - 1"""
+    return Phi(d1(S, K, r, sigma, T)) - 1.0
+
+
+def gamma(S, K, r, sigma, T):
+    """Call 與 Put 的 Gamma 相同"""
+    return phi(d1(S, K, r, sigma, T)) / (S * sigma * math.sqrt(T))
+
+
+def currency_option_gamma(
+    S,
+    K,
+    r,
+    sigma,
+    T,
+    rate_foreign,
+):
+    """Call 與 Put 的 Gamma 相同"""
+    return gamma(S, K, r - rate_foreign, sigma, T) * np.exp(-rate_foreign * T)
+
+
+def vega(S, K, r, sigma, T):
+    """Call 與 Put 的 Vega 相同(對 sigma 的敏感度)"""
+    return S * math.sqrt(T) * phi(d1(S, K, r, sigma, T))
+
+
+def currency_option_vega(S, K, r, sigma, T, rate_foreign):
+    """Currency Call 的 Vega"""
+    return vega(S, K, r - rate_foreign, sigma, T) * np.exp(-rate_foreign * T)
+
+
+def theta_call(S, K, r, sigma, T):
+    """Call 的 Theta"""
+    return -S * phi(d1(S, K, r, sigma, T)) * sigma / (
+        2 * math.sqrt(T)
+    ) - r * K * math.exp(-r * T) * Phi(d2(S, K, r, sigma, T))
+
+
+def theta_put(S, K, r, sigma, T):
+    """Put 的 Theta"""
+    return -S * phi(d1(S, K, r, sigma, T)) * sigma / (
+        2 * math.sqrt(T)
+    ) + r * K * math.exp(-r * T) * Phi(d2(S, K, r, sigma, T))
+
+
+def currency_option_theta(
+    S,
+    K,
+    r,
+    sigma,
+    T,
+    rate_foreign,
+    option_type: Optional[Literal["call", "put"]] = "call",
+):
+    """Currency Call 的 Theta"""
+    if option_type == "call":
+        return (
+            -S
+            * phi(d1(S, K, r - rate_foreign, sigma, T))
+            * sigma
+            * np.exp(-rate_foreign * T)
+            / (2 * math.sqrt(T))
+            + rate_foreign
+            * S
+            * Phi(d1(S, K, r - rate_foreign, sigma, T))
+            * np.exp(-rate_foreign * T)
+            - r * K * math.exp(-r * T) * Phi(d2(S, K, r - rate_foreign, sigma, T))
+        )
+    else:
+        return (
+            -S
+            * phi(d1(S, K, r - rate_foreign, sigma, T))
+            * sigma
+            * np.exp(-rate_foreign * T)
+            / (2 * math.sqrt(T))
+            - rate_foreign
+            * S
+            * Phi(d1(S, K, r - rate_foreign, sigma, T))
+            * np.exp(-rate_foreign * T)
+            + r * K * math.exp(-r * T) * Phi(d2(S, K, r - rate_foreign, sigma, T))
+        )
+
+
+def rho_call(S, K, r, sigma, T):
+    """Call 與 Put 的 Rho 相同"""
+    return K * T * math.exp(-r * T) * Phi(d2(S, K, r, sigma, T))
+
+
+def rho_put(S, K, r, sigma, T):
+    """Put 的 Rho"""
+    return -K * T * math.exp(-r * T) * Phi(-d2(S, K, r, sigma, T))
+
+
+def currency_option_rho(
+    S,
+    K,
+    r,
+    sigma,
+    T,
+    rate_foreign,
+    option_type: Optional[Literal["call", "put"]] = "call",
+):
+    """Currency Call 的 Rho"""
+    if option_type == "call":
+        return rho_call(S, K, r - rate_foreign, sigma, T) * np.exp(-rate_foreign * T)
+    else:
+        return rho_put(S, K, r - rate_foreign, sigma, T) * np.exp(-rate_foreign * T)
+
+
+def put_call_parity_check(c, p, S, K, r, T, rate_foreign):
+    """Check if put-call parity holds"""
+    if c + K * np.exp(-r * T) - p + S * np.exp(-rate_foreign * T) < 0.0001:
+        return True
+    else:
+        print(f"Call + K * exp(-r * T): {c + K * np.exp(-r * T)}")
+        print(
+            f"Put + S * exp(-rate_foreign * T): {- p + S * np.exp(-rate_foreign * T)}"
+        )
+
+        return False
